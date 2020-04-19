@@ -43,7 +43,7 @@ subclass::
             if cycle:
                 p.text('MyList(...)')
             else:
-                with p.group(8, 'MyList([', '])'):
+                with p.simple_group('MyList([', '])'):
                     for idx, item in enumerate(self):
                         if idx:
                             p.text(',')
@@ -57,9 +57,8 @@ or breaks here.  If you pass it an argument it's used instead of the
 default space.  `p.pretty` prettyprints another object using the pretty print
 method.
 
-The first parameter to the `group` function specifies the extra indentation
-of the next line.  In this example the next item will either be on the same
-line (if the items are short enough) or aligned with the right edge of the
+In this example the second item will either be on the same line as the first
+(if the items are short enough) or aligned with the right edge of the
 opening bracket of `MyList`.
 
 If you just want to indent something you can use the group function
@@ -173,6 +172,10 @@ class _PrettyPrinterBase(object):
             yield
         finally:
             self.end_group(indent, close)
+
+    def simple_group(self, open, close):
+        return self.group(len(open), open, close)
+
 
 class PrettyPrinter(_PrettyPrinterBase):
     """
@@ -510,32 +513,31 @@ def _default_pprint(obj, p, cycle):
         # A user-provided repr. Find newlines and replace them with p.break_()
         _repr_pprint(obj, p, cycle)
         return
-    p.begin_group(1, '<')
-    p.pretty(klass)
-    p.text(' at 0x%x' % id(obj))
-    if cycle:
-        p.text(' ...')
-    elif p.verbose:
-        first = True
-        for key in dir(obj):
-            if not key.startswith('_'):
-                try:
-                    value = getattr(obj, key)
-                except AttributeError:
-                    continue
-                if isinstance(value, types.MethodType):
-                    continue
-                if not first:
-                    p.text(',')
-                p.breakable()
-                p.text(key)
-                p.text('=')
-                step = len(key) + 1
-                p.indentation += step
-                p.pretty(value)
-                p.indentation -= step
-                first = False
-    p.end_group(1, '>')
+    with p.simple_group('<', '>'):
+        p.pretty(klass)
+        p.text(' at 0x%x' % id(obj))
+        if cycle:
+            p.text(' ...')
+        elif p.verbose:
+            first = True
+            for key in dir(obj):
+                if not key.startswith('_'):
+                    try:
+                        value = getattr(obj, key)
+                    except AttributeError:
+                        continue
+                    if isinstance(value, types.MethodType):
+                        continue
+                    if not first:
+                        p.text(',')
+                    p.breakable()
+                    p.text(key)
+                    p.text('=')
+                    step = len(key) + 1
+                    p.indentation += step
+                    p.pretty(value)
+                    p.indentation -= step
+                    first = False
 
 
 def _seq_pprinter_factory(start, end):
@@ -546,17 +548,15 @@ def _seq_pprinter_factory(start, end):
     def inner(obj, p, cycle):
         if cycle:
             return p.text(start + '...' + end)
-        step = len(start)
-        p.begin_group(step, start)
-        for idx, x in p._enumerate(obj):
-            if idx:
+        with p.simple_group(start, end):
+            for idx, x in p._enumerate(obj):
+                if idx:
+                    p.text(',')
+                    p.breakable()
+                p.pretty(x)
+            if len(obj) == 1 and type(obj) is tuple:
+                # Special case for 1-item tuples.
                 p.text(',')
-                p.breakable()
-            p.pretty(x)
-        if len(obj) == 1 and type(obj) is tuple:
-            # Special case for 1-item tuples.
-            p.text(',')
-        p.end_group(step, end)
     return inner
 
 
@@ -571,19 +571,17 @@ def _set_pprinter_factory(start, end):
             # Special case.
             p.text(type(obj).__name__ + '()')
         else:
-            step = len(start)
-            p.begin_group(step, start)
-            # Like dictionary keys, we will try to sort the items if there aren't too many
-            if not (p.max_seq_length and len(obj) >= p.max_seq_length):
-                items = _sorted_for_pprint(obj)
-            else:
-                items = obj
-            for idx, x in p._enumerate(items):
-                if idx:
-                    p.text(',')
-                    p.breakable()
-                p.pretty(x)
-            p.end_group(step, end)
+            with p.simple_group(start, end):
+                # Like dictionary keys, we will try to sort the items if there aren't too many
+                if not (p.max_seq_length and len(obj) >= p.max_seq_length):
+                    items = _sorted_for_pprint(obj)
+                else:
+                    items = obj
+                for idx, x in p._enumerate(items):
+                    if idx:
+                        p.text(',')
+                        p.breakable()
+                    p.pretty(x)
     return inner
 
 
@@ -595,32 +593,29 @@ def _dict_pprinter_factory(start, end):
     def inner(obj, p, cycle):
         if cycle:
             return p.text('{...}')
-        step = len(start)
-        p.begin_group(step, start)
-        keys = obj.keys()
-        for idx, key in p._enumerate(keys):
-            if idx:
-                p.text(',')
-                p.breakable()
-            p.pretty(key)
-            p.text(': ')
-            p.pretty(obj[key])
-        p.end_group(step, end)
+        with p.simple_group(start, end):
+            keys = obj.keys()
+            for idx, key in p._enumerate(keys):
+                if idx:
+                    p.text(',')
+                    p.breakable()
+                p.pretty(key)
+                p.text(': ')
+                p.pretty(obj[key])
     return inner
 
 
 def _super_pprint(obj, p, cycle):
     """The pprint for the super type."""
-    p.begin_group(8, '<super: ')
-    p.pretty(obj.__thisclass__)
-    p.text(',')
-    p.breakable()
-    if PYPY: # In PyPy, super() objects don't have __self__ attributes
-        dself = obj.__repr__.__self__
-        p.pretty(None if dself is obj else dself)
-    else:
-        p.pretty(obj.__self__)
-    p.end_group(8, '>')
+    with p.simple_group('<super: ', '>'):
+        p.pretty(obj.__thisclass__)
+        p.text(',')
+        p.breakable()
+        if PYPY: # In PyPy, super() objects don't have __self__ attributes
+            dself = obj.__repr__.__self__
+            p.pretty(None if dself is obj else dself)
+        else:
+            p.pretty(obj.__self__)
 
 
 def _re_pattern_pprint(obj, p, cycle):
@@ -708,14 +703,12 @@ def _exception_pprint(obj, p, cycle):
     name = getattr(obj.__class__, '__qualname__', obj.__class__.__name__)
     if obj.__class__.__module__ not in ('exceptions', 'builtins'):
         name = '%s.%s' % (obj.__class__.__module__, name)
-    step = len(name) + 1
-    p.begin_group(step, name + '(')
-    for idx, arg in enumerate(getattr(obj, 'args', ())):
-        if idx:
-            p.text(',')
-            p.breakable()
-        p.pretty(arg)
-    p.end_group(step, ')')
+    with p.simple_group(name + '(', ')'):
+        for idx, arg in enumerate(getattr(obj, 'args', ())):
+            if idx:
+                p.text(',')
+                p.breakable()
+            p.pretty(arg)
 
 
 #: the exception base
@@ -800,8 +793,7 @@ _singleton_pprinters = dict.fromkeys(map(id, [None, True, False, Ellipsis,
 
 
 def _defaultdict_pprint(obj, p, cycle):
-    name = obj.__class__.__name__
-    with p.group(len(name) + 1, name + '(', ')'):
+    with p.simple_group(obj.__class__.__name__ + '(', ')'):
         if cycle:
             p.text('...')
         else:
@@ -811,16 +803,14 @@ def _defaultdict_pprint(obj, p, cycle):
             p.pretty(dict(obj))
 
 def _ordereddict_pprint(obj, p, cycle):
-    name = obj.__class__.__name__
-    with p.group(len(name) + 1, name + '(', ')'):
+    with p.simple_group(obj.__class__.__name__ + '(', ')'):
         if cycle:
             p.text('...')
         elif len(obj):
             p.pretty(list(obj.items()))
 
 def _deque_pprint(obj, p, cycle):
-    name = obj.__class__.__name__
-    with p.group(len(name) + 1, name + '(', ')'):
+    with p.group(obj.__class__.__name__ + '(', ')'):
         if cycle:
             p.text('...')
         else:
@@ -828,8 +818,7 @@ def _deque_pprint(obj, p, cycle):
 
 
 def _counter_pprint(obj, p, cycle):
-    name = obj.__class__.__name__
-    with p.group(len(name) + 1, name + '(', ')'):
+    with p.group(obj.__class__.__name__ + '(', ')'):
         if cycle:
             p.text('...')
         elif len(obj):
